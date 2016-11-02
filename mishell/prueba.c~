@@ -1,0 +1,33 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+
+#include "linea.h"
+
+int main(int argc, char** argv) {
+    
+char* texto1,texto2,texto3;
+char** textotal=(char**) malloc (size_t 30);
+texto1="Sí, así se accede a un puntero de caracteres";
+
+printf("Funciona así? %s\n",texto1);
+
+texto2="¿Quedará unido?";
+texto3=". Parece que queda unido\n";
+
+textotal[0]=texto2;
+textotal[1]=texto3;
+
+printf("%s",textotal[]);
+
+return 0;
+
+}
+

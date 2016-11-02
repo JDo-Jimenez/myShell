@@ -1,0 +1,538 @@
+/***************************************************/
+/*						   */
+/* Alumno login y dni:				   */
+/* 1.Joaquín Bonet Mira    jobomi    45837490	   */
+/*						   */
+/***************************************************/
+
+
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+
+#include "linea.h"
+
+
+
+
+/**************************
+ *
+ *Bloque para ejecución de órdenes internas
+ *
+ *************************/
+//variables y constantes para simplificar implementación de órdenes internas
+const char* nombres_internas[] = {
+    "cd",
+    "pwd",
+    "showpath",
+    "clearpath",
+    "delpath",
+    "addpath",
+    "showvar",
+    "readvar",
+    "quit",
+    NULL
+};
+
+#define orden_CD        0
+#define orden_PWD       1
+#define orden_SHOWPATH  2
+#define orden_CLEARPATH 3
+#define orden_DELPATH   4
+#define orden_ADDPATH   5
+#define orden_SHOWVAR	6
+#define orden_READVAR   7
+#define orden_QUIT      8
+
+int que_interna(char* q) {
+    int i;
+    if (q == NULL) { // la cadena de entrada debe ser válida
+        return -1;
+    }
+    for (i = 0; nombres_internas[i] != NULL; i++) {
+        if (strcmp(nombres_internas[i], q) == 0) {
+            return i;
+        }
+    }
+    return -1; // no es una orden interna
+}
+
+int ejecuta_interna(int idOrden, t_linea *lin, int ii) {
+    int  desc_0, desc_1, desc_2;
+    int res;
+    int redir=0;
+    static char buf[200];
+    char var1[100];
+    int n;
+    buf[0]=0;var1[0]=0;
+    t_orden *orden = lin->ordenes[ii];
+    if (orden->fichero_entrada!=NULL||orden->fichero_salida!=NULL||orden->fichero_err!=NULL){
+	if(lin->plano2==0){
+    		res = hacer_redir_IN_OUT_ERR(orden, &desc_0, &desc_1, &desc_2);
+		redir=1;
+		if (res < 0) {
+			return res;
+    		}
+	}else{
+		res = hacer_redir_IN_OUT_ERR(orden,NULL,NULL,NULL);
+		if (res<0){
+			return res;
+		}
+	}
+    }
+
+    switch (idOrden) {
+        case orden_CD:
+		if (orden->argumentos_desde_0[1]==NULL){
+			res=chdir(getenv("HOME"));
+			if(res!=0){
+				fprintf(stderr,"Error en orden CD\n");
+				res=-1;	
+			}else{
+				res=setenv("PWD",getenv("HOME"),1);
+			}
+		}else{
+			res=chdir(orden->argumentos_desde_0[1]);
+			if(res!=0){
+				fprintf(stderr,"Error en orden CD\n");
+				res=-1;	
+			}else{	
+				res=setenv("PWD", getcwd(buf,200),1);
+			}
+		}
+		break;
+        case orden_PWD:
+		printf("%s\n",getcwd(buf,200));
+		if (buf==NULL){
+			perror("Error en orden PWD");
+			res=-1;
+		}else{
+			res=0;
+		}
+		break;
+	case orden_SHOWPATH:
+		{
+			char *buf=getenv("PATH");
+			if (buf==NULL){
+				perror("Error en la adquisición de la variable PATH");
+				res=-1;
+			}else{
+				printf("%s\n",buf);
+				res=0;
+			}
+		}
+               	break;
+        case orden_CLEARPATH:
+		res=setenv("PATH","",1);		
+		if(res!=0){
+			perror("Error vaciando el PATH");
+			res=-1;
+		}else{
+			res=0;
+		}		
+		break;
+        case orden_DELPATH:
+		{
+		if (orden->argumentos_desde_0[1]==NULL){
+			fprintf(stderr,"Error, debe indicarse el directorio que se pretende eliminar de la variable PATH\n");
+			res=-1;
+		}
+		char *buf=getenv("PATH");
+        	char *copia_camino1=malloc(strlen(buf)+1);
+        	char *dir1=strtok(buf,":");
+        	while (dir1!=NULL) {
+           		if (strcmp(dir1,orden->argumentos_desde_0[1])!=0){
+				strcat(copia_camino1,dir1);
+				strcat(copia_camino1,":");			
+			}
+           		dir1=strtok(NULL,":");
+        	} //fin del while
+		copia_camino1[strlen(copia_camino1)-1]=0;
+		res=setenv("PATH",copia_camino1,1);
+		free(copia_camino1);
+		if(res!=0){
+			perror("Error al intentar modificar la variable PATH");	
+			res=-1;	
+		}
+		}		
+		break;
+	case orden_ADDPATH:
+		{
+		char *buf;
+		if (orden->argumentos_desde_0[1]==NULL){
+			fprintf(stderr,"Error, debe indicarse el directorio que se pretende añadir a la variable PATH\n");
+			res=-1;
+		}
+		buf=getenv("PATH");
+		char copia_camino[strlen(buf)+strlen(orden->argumentos_desde_0[1])+1];
+        	strcpy(copia_camino,buf);
+        	char* dir=strtok(copia_camino,":");
+        	while (dir!=NULL) {
+           		if (strcmp(dir,orden->argumentos_desde_0[1])==0){
+				res=0;
+				break;
+			}
+           		dir=strtok(NULL,":");
+        	} //fin del while.
+		strcpy(copia_camino,buf);
+		if (strlen(copia_camino)>1){
+			strcat(copia_camino,":");
+		}
+        	strcat(copia_camino,orden->argumentos_desde_0[1]);
+		res=setenv("PATH",copia_camino,1);
+		}
+		break;
+	case orden_SHOWVAR:{
+		char *var;
+		if (orden->argumentos_desde_0[1]!=NULL){
+			int i=1;			
+			while (orden->argumentos_desde_0[i]!=NULL){
+				var=getenv(orden->argumentos_desde_0[i]);
+				printf("%s = %s\n",orden->argumentos_desde_0[i],var);
+				i++;
+			}
+		}else{
+			while(1){
+				n=leer_linea_ordenes(0, var1);
+				if (n == 0) {
+            				//se ha llegado al final del fichero de entrada
+            				//por defecto salimos
+            				break;
+        			} else if (n < 0) {
+            				res=n;
+				}else if (var1 > 0){
+					var=getenv(var1);
+					printf("%s\n",var);
+				}	
+				
+			}	
+		}
+		}
+		break;
+	case orden_READVAR:
+
+		n=leer_linea_ordenes(0, var1);
+		if (n == 0) {
+            			//se ha llegado al final del fichero de entrada
+            			//por defecto salimos
+        	} else if (n < 0) {
+            		res=n;
+		}else if (var1 > 0){
+			res=setenv(orden->argumentos_desde_0[1],var1,1);
+		}			
+		break;
+        case orden_QUIT:
+            exit(0);
+        default:
+            fprintf(stderr, "Orden interna no valida\n");
+            fflush(stderr);
+            res = -1;
+            break;
+    }
+    if (redir==1){
+    	res=quitar_redir_IN_OUT_ERR(desc_0, desc_1, desc_2);
+	redir=0;
+    }
+    return res;
+}
+
+/****
+ *bloque de ejecución de líneas
+ *
+ ****/
+int ejecuta_orden_simple(t_linea *linea) {
+
+	t_orden *laorden = linea->ordenes[0];
+	int res,interna,muerto;
+	//sabemos que no hay tuberías
+	laorden->fdin = -1;
+	laorden->fdout = -1;
+	interna = que_interna(laorden->argumentos_desde_0[0]);
+	if (interna>=0 && linea->plano2==0) {
+		res=ejecuta_interna(interna, linea, 0);
+	} else {
+		int hijo = fork();
+		if (hijo==0){
+			if (interna<0) {
+				res=ejecuta_externa(linea, 0);
+			} else {
+				res=ejecuta_interna(interna, linea, 0);
+			}
+			exit(res);
+		} else if ( linea->plano2==0){
+			int motivo;
+			do{
+				muerto = wait(&motivo);
+			}while (muerto!=hijo);
+			res=motivo;
+		}else{
+		   res=0;
+		} 
+	}
+	return res;
+	//return ejecuta_orden_simple_profes(linea);
+}
+
+
+int ejecuta_tubos(t_linea *linea) {
+
+	int descr[2];	//Iniciamos los descriptores de las tuberias
+	int salida_anterior, contador=linea->n_ordenes, i, muerto;
+	t_orden *miorden;
+	pid_t pidhijos[MAX_ORDENES_LINEA];
+
+	miorden=linea->ordenes[0];
+
+
+        pipe(descr);        
+        pidhijos[0]=fork();
+	if(pidhijos[0]==0){       		//Si es el primer proceso
+        	miorden->fdin=-1;        	//Por ser primera tuberia
+                miorden->fdout=descr[1];	//Apunta a la siguiente tubería
+		close(descr[0]);		//Cierro descriptor 0
+                ejecuta_orden(linea,0);
+	}else{
+                for(i=1; i<(linea->n_ordenes-1); i++){	//Ordenes intermedias
+                	miorden=linea->ordenes[i];
+                	salida_anterior=descr[0];
+                	close(descr[1]);		//Cierro descriptor 1
+                	pipe(descr);			//Creo la siguiente tubería
+			pidhijos[i]=fork();		//Creo el proceso ligado a esa tubería
+			if(pidhijos[i]==0){		//Si es un hijo
+				miorden->fdin=salida_anterior;
+				miorden->fdout=descr[1];
+				close(descr[0]);	//Cierro descriptor 0
+				ejecuta_orden(linea,i);
+				exit(-1);  //no se debería llegar aqui nunca...
+			}else{
+				close(salida_anterior);
+			}
+		}
+	}
+	pidhijos[linea->n_ordenes-1]=fork();	//Ultima orden
+	if(pidhijos[linea->n_ordenes-1]==0){ 
+		miorden=linea->ordenes[linea->n_ordenes-1];
+		miorden->fdin=descr[0];
+		miorden->fdout=-1;
+		close(descr[1]);		//Cierro descriptor 1
+		ejecuta_orden(linea,linea->n_ordenes-1);
+	}else{
+		close(descr[0]);
+		close(descr[1]);
+	}
+
+	if (linea->plano2!=1 && pidhijos[0]!=0){		//Si no estamos en segundo plano
+   		while(contador > 0){
+                        int motivo;
+			muerto=wait(&motivo);
+			// fprintf(stderr,"hijo(%d) motivo(0x%X)\n",muerto,motivo);
+			for(i=0; i<linea->n_ordenes;i++){
+				if (muerto==pidhijos[i]) contador--;
+			}
+		}
+	}
+	
+	return 0;
+
+    //return ejecuta_tubos_profes(linea);
+}
+
+
+/***
+ *funciones de ejecución sencillas
+ *
+ */
+
+//Ejecuta una orden en una línea con tuberías
+//la orden puede ser interna o externa
+int ejecuta_orden(t_linea *linea, int i) {
+    
+
+	t_orden *laorden = linea->ordenes[i];
+	int res,interna;	
+		
+	if (laorden->fdin >= 0){
+		res=dup2(laorden->fdin,0);
+		if (res < 0) fprintf(stderr,"Error al redirecionar tubería de la orden %s (fdin)\n",laorden->argumentos_desde_0[i]);
+	}
+
+	if (laorden->fdout >= 0){
+		res=dup2(laorden->fdout,1);
+		if (res < 0) fprintf(stderr,"Error al redirecionar tubería de la orden %s (fdout)\n",laorden->argumentos_desde_0[i]);
+	}
+
+	interna = que_interna(laorden->argumentos_desde_0[i]);
+	if (interna>=0) {
+		res=ejecuta_interna(interna, linea,i);
+	}else{
+		res=ejecuta_externa(linea, i);
+		exit(1);// ha ocurrido algún error
+	}
+
+	return res;
+	
+
+	//return ejecuta_orden_profes(linea,0);
+    }
+
+// Ejecución de una orden externa, tiene que llamar a redirecciones
+// buscar en el path y hacer el exec... se supone que el fork ya
+// se ha hecho
+int ejecuta_externa(t_linea *lin, int i) {
+	t_orden *inst= lin->ordenes[i];
+	int res=0;
+	if (inst->fichero_entrada!=NULL||inst->fichero_salida!=NULL||inst->fichero_err!=NULL){
+ 		res = hacer_redir_IN_OUT_ERR(inst,NULL,NULL,NULL);
+		if (res!=0){
+			perror("Error al hacer la redirección E/S");
+			return -1;		
+		}
+	}
+	if (index(inst->argumentos_desde_0[0],'/')!=NULL){
+		inst->aEjecutar=inst->argumentos_desde_0[i];
+	} else {
+		char orden_probar[100];
+		char* orden=inst->argumentos_desde_0[0];
+        	char* caminos_entorno=getenv("PATH");
+        	char* copia_camino=malloc(strlen(caminos_entorno)+1);
+        	strcpy(copia_camino,caminos_entorno);
+        	int encontrado=0;
+        	char* dir=strtok(copia_camino,":");
+        	while (dir!=NULL) {
+           		strcpy(orden_probar,dir);
+			strcat(orden_probar,"/");
+           		strcat(orden_probar, orden);
+           		if( access(orden_probar, F_OK)==0){
+                		encontrado=1;
+				inst->aEjecutar=orden_probar;
+                		break;
+           		}
+           	dir=strtok(NULL,":");
+        	} //fin del while
+        	if(encontrado!=1){
+                	fprintf(stderr,"orden (%s) no encontrada en el path\n",orden);
+                	return -1;
+        	}
+        	// ejecución de la orden encontrada...
+	}
+	inst->argumentos_desde_0[0]="";
+	res=execve(inst->aEjecutar, inst->argumentos_desde_0, environ);
+	exit(1);//no deberíamos llegar aquí
+    //return ejecuta_externa_profes(lin, i);
+}
+
+// redireccion de entrada y salida
+// si algunos de los puntos d_X no es NULL se debe hacer en el una copia
+// del descriptor para poder deshacer la redirección más adelante
+int hacer_redir_IN_OUT_ERR(t_orden *laorden, int *d_0, int *d_1, int *d_2) {
+
+    int res = 0,entrada,salida,error;
+    fprintf(stderr,"%s\n",laorden->argumentos_desde_0[0]);
+	
+	if(laorden->fichero_entrada != NULL) {
+		if(d_0!=NULL)*d_0 = dup(0);
+		entrada=open(laorden->fichero_entrada,O_RDONLY);
+		if (entrada!=-1){
+			res=dup2(entrada,0);
+			if (res==-1){
+				perror("Error al redireccionar la entrada estándar");
+				return -1;
+			}
+			close(entrada);
+		}else{
+			fprintf(stderr,"Error al abrir el fichero %s\n",laorden->fichero_entrada);
+			return -1;
+		}
+	}
+	res=0;
+	if(laorden->fichero_salida != NULL) {
+		if(d_1!=NULL)*d_1 = dup(1);
+		if(laorden->salida_append == 1) {		
+			salida=open(laorden->fichero_salida,O_WRONLY | O_APPEND | O_CREAT,0666);
+		} else {
+			salida=open(laorden->fichero_salida,O_WRONLY | O_TRUNC | O_CREAT,0666);
+		}
+		if (salida!=-1){
+			res=dup2(salida,1);
+			if (res==-1){
+				perror("Error al redireccionar la salida estándar");
+				return -1;
+			}
+			close(salida);
+		}else{
+			fprintf(stderr,"Error al abrir el fichero %s\n",laorden->fichero_salida);
+			return -1;
+		}
+	}
+	res=0;
+
+	if(laorden->fichero_err != NULL) {
+		if(d_2!=NULL)*d_2 = dup(2);
+		if(laorden->error_append == 1) {
+			error=open(laorden->fichero_err,O_WRONLY | O_APPEND | O_CREAT,0666);
+		} else {
+			error=open(laorden->fichero_err,O_WRONLY | O_TRUNC | O_CREAT,0666);
+		}
+		if (error!=-1){
+			res=dup2(error,2);
+			if (res==-1){
+				perror("Error al redireccionar la salida de error estándar");
+				return -1;
+			}
+			close(error);
+		}else{
+			fprintf(stderr,"Error al abrir el fichero %s\n",laorden->fichero_err);
+			return -1;
+		}
+	}	
+ 
+	return 0;
+
+    //return hacer_redirProfes(laorden);
+}
+
+
+// sólo se quitan redirecciones si tenemos duplicados de descriptores válidos
+int quitar_redir_IN_OUT_ERR(int d_0, int d_1, int d_2) {	
+	int res;   
+    	if (d_0 >= 0) {
+		res=dup2(d_0,0);
+		if (res<0){
+			perror("Fallo al deshacer redirección de entrada");
+			return -1;
+		}
+		close(d_0);
+    	}
+    	if (d_1 >= 0) {
+		res=dup2(d_1,1);
+		if (res<0){
+			perror("Fallo al deshacer redirección de salida");
+			return -1;
+		}
+		close(d_1);
+    	}
+    	if (d_2 >= 0) {
+		res=dup2(d_2,2);
+		if (res<0){
+			perror("Fallo al deshacer redirección de salidad de error");
+			return -1;
+		}
+		close(d_2);
+    	}
+		
+	
+	return res;
+    	//return quitar_redirProfes(d_0, d_1, d_2);
+}
+
+
+
+
